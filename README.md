@@ -129,3 +129,111 @@ Create a `data` folder and place the following CSV files inside it.
    - Fat per 100g
 
 Folder structure:
+
+
+data/
+├── indian_recipes.csv
+├── global_recipes.csv
+├── cocktails.csv
+└── nutrition_database.csv
+
+
+## Project Structure
+
+
+flavor-fusion-ai/
+│
+├── app.py
+├── database.py
+├── requirements.txt
+├── vercel.json
+├── index.html
+│
+├── data/
+│ ├── indian_recipes.csv
+│ ├── global_recipes.csv
+│ ├── cocktails.csv
+│ └── nutrition_database.csv
+│
+└── README.md
+
+
+## Running the Project Locally
+
+Install dependencies:
+
+
+pip install -r requirements.txt
+
+
+Run the Streamlit application:
+
+
+streamlit run app.py
+
+
+The application will start at:
+
+
+http://localhost:8501
+
+
+## Deployment (Vercel + stlite)
+
+Traditional Streamlit apps require a backend server. This project instead uses **stlite**, which compiles Python into WebAssembly so the app runs entirely in the browser.
+
+Steps:
+
+1. Convert the Streamlit app to a stlite bundle.
+2. Serve it using an `index.html` bootstrap.
+3. Deploy the static files to Vercel.
+
+### Required Security Headers
+
+The `vercel.json` file must include:
+
+- Cross-Origin-Embedder-Policy: require-corp
+- Cross-Origin-Opener-Policy: same-origin
+
+These headers are required for WebAssembly execution in modern browsers.
+
+## Technology Stack
+
+Frontend
+- Streamlit
+- stlite (WebAssembly runtime)
+
+Backend Logic
+- Python
+- Pandas
+- RapidFuzz (fuzzy matching)
+
+Datasets
+- Recipe datasets
+- Cocktail datasets
+- Nutrition database
+
+Deployment
+- Vercel
+- Static hosting with WASM execution
+
+## Use Cases
+
+- Discover recipes from available ingredients
+- Generate creative fusion dishes
+- Explore cocktail combinations
+- Estimate nutrition without external APIs
+- Experiment with AI-assisted cooking
+
+## Future Improvements
+
+- Ingredient substitution engine
+- Dietary restriction filters
+- Recipe rating and learning system
+- Vector embedding search for improved RAG
+- Image generation for dishes
+- Voice cooking assistant
+
+## License
+
+MIT License
