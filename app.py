@@ -2,7 +2,7 @@
 app.py — Streamlit frontend for Flavor Fusion AI.
 
 Layout:
-  • Sidebar  : theme toggle, language, API key, all user constraints
+    • Sidebar  : theme toggle, language, and all user constraints
   • Main     : ingredient input, generate button, recipe / nutrition / beverage tabs
 
 Dark mode is implemented by injecting custom CSS overrides via st.markdown and
@@ -19,6 +19,7 @@ import json
 import re
 import sys
 from pathlib import Path
+from uuid import uuid4
 
 import streamlit as st
 
@@ -26,15 +27,11 @@ import streamlit as st
 sys.path.insert(0, str(Path(__file__).parent))
 
 from config import VALID_EQUIPMENT, VALID_CUISINES
-from database import RecipeDatabase
 from engine import CulinaryEngine, GenerationResult
-from models import BeveragePairing, GeneratedRecipe, IngredientItem, TimeConstraints, UserConstraints
-from nutrition import calculate_recipe_nutrition
+from models import BeveragePairing, GeneratedRecipe, TimeConstraints, UserConstraints
 from retrieval import (
     load_all_recipes,
     load_beverages,
-    retrieve_beverage_pairing,
-    retrieve_candidate_recipes,
 )
 from user_store import (
     add_favorite,
@@ -71,8 +68,6 @@ UI_STRINGS: dict = {
     "en": {
         "title": "🍽️ FUSION FLAVOUR",
         "subtitle": "Discover recipes, beverages, and nutrition in one smart kitchen workspace",
-        "api_key_label": "OpenAI API Key",
-        "api_key_help": "Used only for this session. Never stored.",
         "offline_mode_label": "Offline Mode (No API Key)",
         "offline_mode_help": "Use local dataset retrieval only. No LLM creativity or translation.",
         "language_label": "Output Language",
@@ -99,7 +94,6 @@ UI_STRINGS: dict = {
         "no_beverage_match": "No beverage match found for the current ingredients and filters.",
         "generating": "🔥 Cooking up something amazing…",
         "no_ingredients": "⚠️ Please add at least one ingredient.",
-        "no_api_key": "🔑 Please enter your OpenAI API Key in the sidebar.",
         "recipe_tab": "🍽️ Recipe",
         "nutrition_tab": "📊 Nutrition",
         "beverage_tab": "🥂 Beverage Pairing",
@@ -176,8 +170,6 @@ UI_STRINGS: dict = {
     "hi": {
         "title": "🍽️ FUSION FLAVOUR",
         "subtitle": "आपका AI-संचालित पाक और मिक्सोलॉजी सहायक",
-        "api_key_label": "OpenAI API कुंजी",
-        "api_key_help": "केवल इस सत्र के लिए उपयोग की जाती है।",
         "language_label": "आउटपुट भाषा",
         "skill_label": "कौशल स्तर",
         "equipment_label": "उपलब्ध उपकरण",
@@ -194,7 +186,6 @@ UI_STRINGS: dict = {
         "generate_btn": "✨ रेसिपी बनाएं",
         "generating": "🔥 कुछ अद्भुत पका रहे हैं…",
         "no_ingredients": "⚠️ कृपया कम से कम एक सामग्री जोड़ें।",
-        "no_api_key": "🔑 कृपया साइडबार में OpenAI API कुंजी दर्ज करें।",
         "recipe_tab": "🍽️ रेसिपी",
         "nutrition_tab": "📊 पोषण",
         "beverage_tab": "🥂 पेय पदार्थ",
@@ -227,8 +218,6 @@ UI_STRINGS: dict = {
     "it": {
         "title": "🍽️ FUSION FLAVOUR",
         "subtitle": "Il tuo assistente culinario e mixologico alimentato dall'AI",
-        "api_key_label": "Chiave API OpenAI",
-        "api_key_help": "Usata solo per questa sessione.",
         "language_label": "Lingua di output",
         "skill_label": "Livello di abilità",
         "equipment_label": "Attrezzatura disponibile",
@@ -245,7 +234,6 @@ UI_STRINGS: dict = {
         "generate_btn": "✨ Genera Ricetta",
         "generating": "🔥 Preparando qualcosa di straordinario…",
         "no_ingredients": "⚠️ Aggiungi almeno un ingrediente.",
-        "no_api_key": "🔑 Inserisci la chiave API OpenAI nella barra laterale.",
         "recipe_tab": "🍽️ Ricetta",
         "nutrition_tab": "📊 Nutrizione",
         "beverage_tab": "🥂 Abbinamento bevanda",
@@ -278,8 +266,6 @@ UI_STRINGS: dict = {
     "zh": {
         "title": "🍽️ FUSION FLAVOUR",
         "subtitle": "您的 AI 驱动烹饪和调酒助手",
-        "api_key_label": "OpenAI API 密钥",
-        "api_key_help": "仅在本次会话中使用，不会被存储。",
         "language_label": "输出语言",
         "skill_label": "技能等级",
         "equipment_label": "可用设备",
@@ -296,7 +282,6 @@ UI_STRINGS: dict = {
         "generate_btn": "✨ 生成食谱",
         "generating": "🔥 正在烹饪美味…",
         "no_ingredients": "⚠️ 请至少添加一种食材。",
-        "no_api_key": "🔑 请在侧边栏输入 OpenAI API 密钥。",
         "recipe_tab": "🍽️ 食谱",
         "nutrition_tab": "📊 营养信息",
         "beverage_tab": "🥂 饮品搭配",
@@ -329,8 +314,6 @@ UI_STRINGS: dict = {
     "mr": {
         "title": "🍽️ FUSION FLAVOUR",
         "subtitle": "तुमचा AI-आधारित पाककला आणि पेय सहाय्यक",
-        "api_key_label": "OpenAI API की",
-        "api_key_help": "फक्त या सत्रासाठी वापरली जाते. संग्रहित केली जाणार नाही.",
         "offline_mode_label": "ऑफलाइन मोड (API की शिवाय)",
         "offline_mode_help": "फक्त स्थानिक डेटासेट वापरा. LLM सर्जनशीलता किंवा भाषांतर नाही.",
         "language_label": "आउटपुट भाषा",
@@ -357,7 +340,6 @@ UI_STRINGS: dict = {
         "no_beverage_match": "सध्याच्या साहित्य आणि फिल्टरसाठी कोणतेही पेय जुळले नाही.",
         "generating": "🔥 काहीतरी अप्रतिम तयार होत आहे…",
         "no_ingredients": "⚠️ कृपया किमान एक साहित्य जोडा.",
-        "no_api_key": "🔑 कृपया साइडबारमध्ये OpenAI API की द्या.",
         "recipe_tab": "🍽️ रेसिपी",
         "nutrition_tab": "📊 पोषण",
         "beverage_tab": "🥂 पेय जोडी",
@@ -569,8 +551,6 @@ def _init_session_state() -> None:
     defaults = {
         "dark_mode": True,
         "language": "en",
-        "api_key": "",
-        "offline_mode": True,
         "user_id": None,
         "user_name": "",
         "last_result": None,
@@ -578,6 +558,9 @@ def _init_session_state() -> None:
         "last_constraints": None,
         "pantry_text": "",
         "beverage_text": "",
+        "user_request": "",
+        "conversation_messages": [],
+        "conversation_session_id": str(uuid4()),
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -613,12 +596,37 @@ def _apply_theme() -> None:
 
 
 def _parse_ingredients(raw: str) -> list[str]:
-    """Split textarea input into a clean list of ingredient strings."""
-    return [
-        line.strip()
-        for line in raw.splitlines()
-        if line.strip()
-    ]
+    """Split textarea input into ingredient tokens from lines, commas, and semicolons."""
+    if not raw:
+        return []
+
+    chunks = [c.strip() for c in re.split(r"[\n,;]+", raw) if c.strip()]
+    parsed: list[str] = []
+
+    for chunk in chunks:
+        # Handle inputs like "tomatoes or tomato sauce".
+        if " or " in chunk.lower():
+            options = [p.strip() for p in re.split(r"\s+or\s+", chunk, flags=re.IGNORECASE) if p.strip()]
+            parsed.extend(options)
+            continue
+        parsed.append(chunk)
+
+    cleaned_parsed: list[str] = []
+    for item in parsed:
+        normalized = re.sub(r"^(and|or)\s+", "", item.strip(), flags=re.IGNORECASE)
+        if normalized:
+            cleaned_parsed.append(normalized)
+
+    # De-duplicate while preserving order
+    seen: set[str] = set()
+    unique: list[str] = []
+    for item in cleaned_parsed:
+        key = item.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(item)
+    return unique
 
 
 def _ingredient_symbol(name: str) -> str:
@@ -899,69 +907,6 @@ def _render_dashboard() -> None:
                 st.success("Profile updated")
 
 
-def _parse_quantity_to_grams(raw_qty: str) -> float:
-    """Best-effort conversion from a quantity token to grams for offline mode."""
-    if not raw_qty:
-        return 100.0
-    match = re.search(r"\d+(?:\.\d+)?", raw_qty)
-    if not match:
-        return 100.0
-    return float(match.group())
-
-
-def _parse_ingredient_items(raw: str) -> list[IngredientItem]:
-    """Parse CSV ingredient blob like 'name:qty,name:qty' into IngredientItem list."""
-    items: list[IngredientItem] = []
-    if not raw:
-        return items
-
-    for part in raw.split(","):
-        token = part.strip()
-        if not token:
-            continue
-        if ":" in token:
-            name, qty = token.split(":", 1)
-            qty = qty.strip()
-        else:
-            name, qty = token, "100g"
-        items.append(
-            IngredientItem(
-                name=name.strip(),
-                quantity_grams=_parse_quantity_to_grams(qty),
-                original_measure=qty,
-            )
-        )
-    return items
-
-
-def _build_offline_recipe(candidate: dict, constraints: UserConstraints) -> GeneratedRecipe:
-    """Construct a GeneratedRecipe from a retrieved CSV candidate."""
-    instructions = [s.strip() for s in str(candidate.get("instructions", "")).split("|") if s.strip()]
-    equipment = [e.strip() for e in str(candidate.get("equipment", "")).split(",") if e.strip()]
-
-    return GeneratedRecipe(
-        recipe_name=str(candidate.get("recipe_name", _t("offline_recipe_title"))),
-        cuisine_type=str(candidate.get("cuisine", constraints.cuisine_preference)),
-        estimated_time_minutes=int(float(candidate.get("total_time_min", constraints.time_constraints.max_total_minutes))),
-        equipment_used=equipment,
-        servings=constraints.servings,
-        ingredients=_parse_ingredient_items(str(candidate.get("ingredients", ""))),
-        step_by_step_instructions=instructions,
-        beverage_pairing=None,
-    )
-
-
-def _build_offline_beverage(candidate: dict) -> BeveragePairing:
-    """Construct a BeveragePairing from a retrieved beverage candidate."""
-    instructions = [s.strip() for s in str(candidate.get("instructions", "")).split("|") if s.strip()]
-    return BeveragePairing(
-        name=str(candidate.get("beverage_name", "Suggested Beverage")),
-        type=str(candidate.get("type", "Mocktail")),
-        ingredients=_parse_ingredient_items(str(candidate.get("ingredients", ""))),
-        instructions=instructions,
-    )
-
-
 def _render_beverage_pairing(bp: BeveragePairing) -> None:
     """Render a beverage pairing or standalone beverage card."""
     st.markdown(f"## {bp.name}")
@@ -1014,24 +959,6 @@ def _render_sidebar() -> dict:
 
         st.divider()
 
-        # ── API key ────────────────────────────────────────────────────────
-        api_key = st.text_input(
-            _t("api_key_label"),
-            type="password",
-            value=st.session_state.api_key,
-            help=_t("api_key_help"),
-        )
-        st.session_state.api_key = api_key
-
-        offline_mode = st.toggle(
-            _t("offline_mode_label"),
-            value=st.session_state.offline_mode,
-            help=_t("offline_mode_help"),
-        )
-        st.session_state.offline_mode = offline_mode
-
-        st.divider()
-
         # ── Skill level ────────────────────────────────────────────────────
         skill = st.selectbox(
             _t("skill_label"),
@@ -1050,7 +977,7 @@ def _render_sidebar() -> dict:
         cuisine = st.selectbox(
             _t("cuisine_label"),
             options=sorted(VALID_CUISINES),
-            index=sorted(VALID_CUISINES).index("Indian"),
+            index=sorted(VALID_CUISINES).index("Global"),
         )
 
         # ── Meal category ──────────────────────────────────────────────────
@@ -1072,26 +999,6 @@ def _render_sidebar() -> dict:
         # ── Absurd mode ────────────────────────────────────────────────────
         absurd = st.toggle(_t("absurd_label"), help=_t("absurd_help"))
 
-        st.divider()
-
-        # ── DB statistics ──────────────────────────────────────────────────
-        with st.expander(_t("db_stats"), expanded=False):
-            try:
-                db = RecipeDatabase()
-                stats = db.get_stats()
-                st.metric(_t("recipes_in_db"), f"{stats['recipes']:,}")
-                st.metric(_t("beverages_in_db"), f"{stats['beverages']:,}")
-                st.metric(_t("nutrition_entries"), f"{stats['nutrition_entries']:,}")
-            except Exception as exc:
-                st.caption(f"DB unavailable: {exc}")
-
-        with st.expander(_t("datasets_header"), expanded=False):
-            st.caption(_t("datasets_help"))
-            st.markdown("- Indian food ideas: https://www.kaggle.com/datasets/nehaprabhavalkar/indian-food-101")
-            st.markdown("- Global recipes: https://www.kaggle.com/datasets/shuyangli94/food-com-recipes-and-user-interactions")
-            st.markdown("- Beverage recipes: https://www.thecocktaildb.com/api.php")
-            st.markdown("- Nutrition data: https://fdc.nal.usda.gov/download-datasets.html")
-
     return {
         "skill": skill,
         "equipment": equipment,
@@ -1101,8 +1008,6 @@ def _render_sidebar() -> dict:
         "max_total": max_total,
         "servings": servings,
         "absurd": absurd,
-        "api_key": api_key,
-        "offline_mode": offline_mode,
     }
 
 
@@ -1229,7 +1134,11 @@ def _render_debug_tab(result) -> None:
 # Generation Logic
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _run_generation(ingredients: list[str], sidebar_vals: dict) -> None:
+def _run_generation(
+    ingredients: list[str],
+    sidebar_vals: dict,
+    user_request: str,
+) -> None:
     """Build constraints, call CulinaryEngine.generate(), store in session state."""
     constraints = UserConstraints(
         skill_level=sidebar_vals["skill"],
@@ -1246,46 +1155,31 @@ def _run_generation(ingredients: list[str], sidebar_vals: dict) -> None:
         servings=sidebar_vals["servings"],
     )
 
-    if sidebar_vals.get("offline_mode"):
-        candidates = retrieve_candidate_recipes(constraints)
-        if not candidates:
-            raise ValueError(_t("offline_no_candidates"))
-
-        recipe = _build_offline_recipe(candidates[0], constraints)
-        bev_candidates = retrieve_beverage_pairing(constraints)
-        if bev_candidates:
-            recipe.beverage_pairing = _build_offline_beverage(bev_candidates[0])
-
-        nutrition = calculate_recipe_nutrition(recipe)
-        st.session_state.last_result = GenerationResult(
-            recipe=recipe,
-            nutrition=nutrition,
-            translated_recipe=None,
-            candidates_used=candidates,
-            raw_llm_response="",
-            system_prompt="Offline mode: no LLM prompt used.",
-            user_prompt="Offline mode: dataset retrieval only.",
-        )
-        user_id = st.session_state.get("user_id")
-        if user_id:
-            add_recent(user_id, "recipe", recipe.recipe_name, recipe.model_dump())
-            if recipe.beverage_pairing:
-                add_recent(
-                    user_id,
-                    "beverage",
-                    recipe.beverage_pairing.name,
-                    recipe.beverage_pairing.model_dump(),
-                )
-        st.session_state.last_constraints = constraints
-        return
-
-    engine = CulinaryEngine(api_key=sidebar_vals["api_key"])
+    engine = CulinaryEngine()
 
     with st.spinner(_t("generating")):
-        result = engine.generate(constraints)
+        result = engine.generate(
+            constraints,
+            session_messages=st.session_state.get("conversation_messages", []),
+            user_request=user_request,
+        )
 
     st.session_state.last_result = result
     st.session_state.last_constraints = constraints
+    summary_line = f"Generated recipe: {result.recipe.recipe_name}"
+    turns = st.session_state.get("conversation_messages", [])
+    if user_request.strip():
+        turns.append({"role": "user", "content": user_request.strip()})
+    else:
+        turns.append(
+            {
+                "role": "user",
+                "content": f"Ingredients: {', '.join(ingredients)}",
+            }
+        )
+    turns.append({"role": "assistant", "content": summary_line})
+    st.session_state.conversation_messages = turns[-20:]
+
     user_id = st.session_state.get("user_id")
     if user_id:
         add_recent(user_id, "recipe", result.recipe.recipe_name, result.recipe.model_dump())
@@ -1302,6 +1196,7 @@ def _run_beverage_generation(
     ingredients: list[str],
     beverage_type: str,
     sidebar_vals: dict,
+    user_request: str,
 ) -> None:
     """Generate a standalone beverage from manual user input."""
     constraints = UserConstraints(
@@ -1319,11 +1214,24 @@ def _run_beverage_generation(
         servings=sidebar_vals["servings"],
     )
 
-    candidates = retrieve_candidate_recipes(constraints)
-    if not candidates:
+    engine = CulinaryEngine()
+    beverage_request = user_request.strip() or "Generate a beverage only response."
+    result = engine.generate(
+        constraints,
+        session_messages=st.session_state.get("conversation_messages", []),
+        user_request=beverage_request,
+    )
+
+    beverage = result.recipe.beverage_pairing
+    if not beverage:
         raise ValueError(_t("no_beverage_match"))
 
-    st.session_state.last_beverage = _build_offline_beverage(candidates[0])
+    st.session_state.last_beverage = beverage
+    turns = st.session_state.get("conversation_messages", [])
+    turns.append({"role": "user", "content": beverage_request})
+    turns.append({"role": "assistant", "content": f"Generated beverage: {beverage.name}"})
+    st.session_state.conversation_messages = turns[-20:]
+
     user_id = st.session_state.get("user_id")
     if user_id:
         add_recent(
@@ -1371,6 +1279,24 @@ def main() -> None:
         )
         st.session_state.pantry_text = pantry_raw
 
+    user_request = st.text_area(
+        "Describe what you want",
+        value=st.session_state.user_request,
+        height=80,
+        placeholder="Example: High-protein dinner, spicy, one-pot, no dairy",
+        help="Optional natural language request sent to the local model with your ingredients.",
+    )
+    st.session_state.user_request = user_request
+
+    session_col1, session_col2 = st.columns([2, 1])
+    with session_col1:
+        st.caption(f"Session ID: {st.session_state.conversation_session_id}")
+    with session_col2:
+        if st.button("Reset Session", use_container_width=True):
+            st.session_state.conversation_messages = []
+            st.session_state.conversation_session_id = str(uuid4())
+            st.rerun()
+
     with col_generate:
         st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
 
@@ -1388,11 +1314,9 @@ def main() -> None:
         ingredients = _parse_ingredients(pantry_raw)
         if not ingredients:
             st.warning(_t("no_ingredients"))
-        elif (not sidebar_vals["api_key"]) and (not sidebar_vals.get("offline_mode")):
-            st.warning(_t("no_api_key"))
         else:
             try:
-                _run_generation(ingredients, sidebar_vals)
+                _run_generation(ingredients, sidebar_vals, user_request)
             except Exception as exc:
                 st.error(f"{_t('error_prefix')}: {exc}")
 
@@ -1432,6 +1356,7 @@ def main() -> None:
                     beverage_ingredients,
                     beverage_type,
                     sidebar_vals,
+                    user_request,
                 )
             except Exception as exc:
                 st.error(f"{_t('error_prefix')}: {exc}")

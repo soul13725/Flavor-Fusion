@@ -190,7 +190,12 @@ def _fuzzy_match_ingredient(
         logger.debug("No match for '%s' (cleaned: '%s')", name, cleaned)
         return None, 0
 
-    matched_name, score, _idx = result
+    # thefuzz/rapidfuzz can return either (match, score) or
+    # (match, score, index) depending on installed versions.
+    if len(result) == 2:
+        matched_name, score = result
+    else:
+        matched_name, score = result[0], result[1]
     row = db[db["food_name_lower"] == matched_name].iloc[0]
     return row, score
 

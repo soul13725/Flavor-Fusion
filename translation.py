@@ -1,15 +1,9 @@
 """
-translation.py — Multilingual Decoupling Layer.
+translation.py - Multilingual display-string translation.
 
-All core LLM reasoning and ingredient JSON is produced in English (mandatory
-for the nutritional matcher).  This module provides an asynchronous helper
-that translates *only the display strings* — recipe title, step-by-step
-instructions, and beverage instructions — into the user's target language.
-
-Architecture:
-  • Uses a lightweight LLM call (gpt-4o-mini by default) for translation.
-  • Runs asynchronously so the main pipeline can fire-and-forget.
-  • Falls back gracefully to English on any error.
+All core LLM reasoning and ingredient JSON is produced in English for the
+nutrition matcher. This module translates only user-facing strings (title and
+instruction text) and keeps ingredient names unchanged.
 """
 
 from __future__ import annotations
@@ -17,33 +11,15 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import Optional
 
-from openai import AsyncOpenAI
+import aiohttp
 
-from config import OPENAI_API_KEY, TRANSLATION_MODEL, LLM_MAX_TOKENS
+from config import LLM_MAX_TOKENS, OLLAMA_BASE_URL, TRANSLATION_MODEL
 from models import GeneratedRecipe
 
 logger = logging.getLogger(__name__)
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Async OpenAI Client (lazy init)
-# ─────────────────────────────────────────────────────────────────────────────
-
-_async_client: Optional[AsyncOpenAI] = None
-
-
-def _get_async_client() -> AsyncOpenAI:
-    global _async_client
-    if _async_client is None:
-        _async_client = AsyncOpenAI(api_key=OPENAI_API_KEY)
-    return _async_client
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Language Code → Display Name Mapping
-# ─────────────────────────────────────────────────────────────────────────────
+_OLLAMA_TRANSLATION_URL = f"{OLLAMA_BASE_URL.rstrip('/')}/api/generate"
 
 LANGUAGE_NAMES = {
     "en": "English",
@@ -75,54 +51,37 @@ LANGUAGE_NAMES = {
     "sv": "Swedish",
 }
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Translation Prompt
-# ─────────────────────────────────────────────────────────────────────────────
-
 _TRANSLATION_SYSTEM_PROMPT = """\
-You are a professional culinary translator.  Translate the following JSON \
-fields into {target_language}.
+You are a professional culinary translator. Translate the following JSON fields
+into {target_language}.
 
 RULES:
-1. Translate ONLY the values — never change JSON keys.
-2. Do NOT translate ingredient names — leave them in English.
-3. Translate: recipe_name, step_by_step_instructions, beverage_pairing.name, \
+1. Translate ONLY the values - never change JSON keys.
+2. Do NOT translate ingredient names - leave them in English.
+3. Translate: recipe_name, step_by_step_instructions, beverage_pairing.name,
    beverage_pairing.instructions.
 4. Keep all numeric values and units unchanged.
-5. Respond with ONLY the translated JSON object — no markdown, no commentary.
+5. Respond with ONLY the translated JSON object - no markdown, no commentary.
 """
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Core Async Translation Function
-# ─────────────────────────────────────────────────────────────────────────────
+def _extract_ollama_text(payload: dict) -> str:
+    response = payload.get("response", "")
+    if isinstance(response, str):
+        return response.strip()
+    raise ValueError("Unexpected Ollama translation response format")
+
 
 async def translate_display_strings(
     recipe: GeneratedRecipe,
     target_language: str,
 ) -> GeneratedRecipe:
-    """
-    Translate user-facing display strings in a GeneratedRecipe to the target
-    language while preserving English ingredient names.
-
-    Args:
-        recipe: The fully validated GeneratedRecipe (English).
-        target_language: ISO 639-1 language code (e.g. 'hi', 'es', 'fr').
-
-    Returns:
-        A new GeneratedRecipe with translated display fields.
-        Falls back to the original English recipe on any error.
-    """
-    # No-op for English
+    """Translate display-only fields while preserving nutrition-safe ingredient names."""
     if target_language.lower() in ("en", "eng", "english"):
         return recipe
 
-    lang_name = LANGUAGE_NAMES.get(
-        target_language.lower(), target_language,
-    )
+    lang_name = LANGUAGE_NAMES.get(target_language.lower(), target_language)
 
-    # Build a minimal payload of only translatable fields
     translatable = {
         "recipe_name": recipe.recipe_name,
         "step_by_step_instructions": recipe.step_by_step_instructions,
@@ -134,80 +93,73 @@ async def translate_display_strings(
         }
 
     system_msg = _TRANSLATION_SYSTEM_PROMPT.format(target_language=lang_name)
+    prompt = (
+        f"{system_msg}\n\n"
+        f"Translate this JSON object:\n"
+        f"{json.dumps(translatable, ensure_ascii=False)}"
+    )
+    payload = {
+        "model": TRANSLATION_MODEL,
+        "prompt": prompt,
+        "stream": False,
+        "options": {
+            "temperature": 0.3,
+            "num_predict": LLM_MAX_TOKENS,
+        },
+    }
 
     try:
-        client = _get_async_client()
-        response = await client.chat.completions.create(
-            model=TRANSLATION_MODEL,
-            temperature=0.3,  # low creativity for translation
-            max_tokens=LLM_MAX_TOKENS,
-            messages=[
-                {"role": "system", "content": system_msg},
-                {"role": "user", "content": json.dumps(translatable, ensure_ascii=False)},
-            ],
-        )
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=120)) as session:
+            async with session.post(_OLLAMA_TRANSLATION_URL, json=payload) as response:
+                response.raise_for_status()
+                raw = _extract_ollama_text(await response.json())
 
-        raw = response.choices[0].message.content.strip()
-        # Strip markdown fences if the model wraps them
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
 
         translated = json.loads(raw)
 
-        # Merge translated fields back into a copy of the recipe
         recipe_dict = recipe.model_dump()
-        recipe_dict["recipe_name"] = translated.get(
-            "recipe_name", recipe.recipe_name,
-        )
+        recipe_dict["recipe_name"] = translated.get("recipe_name", recipe.recipe_name)
         recipe_dict["step_by_step_instructions"] = translated.get(
-            "step_by_step_instructions", recipe.step_by_step_instructions,
+            "step_by_step_instructions", recipe.step_by_step_instructions
         )
 
         if recipe.beverage_pairing and "beverage_pairing" in translated:
             bp = translated["beverage_pairing"]
             recipe_dict["beverage_pairing"]["name"] = bp.get(
-                "name", recipe.beverage_pairing.name,
+                "name", recipe.beverage_pairing.name
             )
             recipe_dict["beverage_pairing"]["instructions"] = bp.get(
-                "instructions", recipe.beverage_pairing.instructions,
+                "instructions", recipe.beverage_pairing.instructions
             )
 
         return GeneratedRecipe.model_validate(recipe_dict)
-
     except json.JSONDecodeError as exc:
         logger.error("Translation JSON parse failed: %s", exc)
         return recipe
     except Exception as exc:
-        logger.error("Translation API call failed: %s", exc)
+        logger.error("Translation call failed: %s", exc)
         return recipe
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Synchronous Convenience Wrapper
-# ─────────────────────────────────────────────────────────────────────────────
 
 def translate_display_strings_sync(
     recipe: GeneratedRecipe,
     target_language: str,
 ) -> GeneratedRecipe:
-    """
-    Blocking wrapper around the async translation function,
-    safe to call from non-async contexts.
-    """
+    """Blocking wrapper around async translation function."""
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
         loop = None
 
     if loop and loop.is_running():
-        # Already inside an event loop (e.g. Jupyter) — schedule as task
         import concurrent.futures
+
         with concurrent.futures.ThreadPoolExecutor() as pool:
             return pool.submit(
                 asyncio.run,
                 translate_display_strings(recipe, target_language),
             ).result()
-    else:
-        return asyncio.run(
-            translate_display_strings(recipe, target_language),
-        )
+
+    return asyncio.run(translate_display_strings(recipe, target_language))

@@ -6,7 +6,7 @@ Run with:
     python main.py --absurd         # absurd combos mode
     python main.py --nutrition-only # offline nutrition from JSON file
 
-Set OPENAI_API_KEY in your environment or .env file before running.
+Ensure Ollama is running locally and `LLM_MODEL` is available before running.
 """
 
 from __future__ import annotations

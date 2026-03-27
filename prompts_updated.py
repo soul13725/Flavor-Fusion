@@ -40,7 +40,7 @@ ABSOLUTE RULES (violation = failure):
 3. **Ingredient precision**: Every ingredient MUST include a `quantity_grams` field with \
    the weight in grams (numeric, > 0).  Also include `original_measure` for human readability.
 4. **Ingredient lock (strict)**: Use ONLY ingredients from the user's provided list. \
-    Do NOT add any new ingredient and do NOT omit any user ingredient.
+     Do NOT add any new ingredient and do NOT omit any user ingredient.
 5. **Spice quantities (mandatory)**: Any spice used must appear with explicit quantity in grams and original measure.
 6. **Equipment honesty**: Only use equipment from the ALLOWED list below.
 7. **Time bound**: The recipe's `estimated_time_minutes` MUST NOT exceed {max_total_minutes} minutes.

@@ -28,12 +28,14 @@ OFFLINE_WORLD_NUTRITION_CSV = DATA_DIR / "offline_world_nutrition.csv"
 # ─────────────────────────────────────────────────────────────────────────────
 # LLM Configuration
 # ─────────────────────────────────────────────────────────────────────────────
-OPENAI_API_KEY       = os.getenv("OPENAI_API_KEY", "")
-LLM_MODEL            = os.getenv("LLM_MODEL", "gpt-4o")
-LLM_TEMPERATURE      = float(os.getenv("LLM_TEMPERATURE", "0.7"))
+ANTHROPIC_API_KEY    = os.getenv("ANTHROPIC_API_KEY", os.getenv("ANTHROPIC_CLAUDE_API_KEY", ""))
+LLM_PROVIDER         = os.getenv("LLM_PROVIDER", "ollama")
+OLLAMA_BASE_URL      = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
+LLM_MODEL            = os.getenv("LLM_MODEL", "mistral")
+LLM_TEMPERATURE      = float(os.getenv("LLM_TEMPERATURE", "0.2"))
 LLM_TEMPERATURE_HIGH = float(os.getenv("LLM_TEMPERATURE_HIGH", "1.3"))  # absurd combos
 LLM_MAX_TOKENS       = int(os.getenv("LLM_MAX_TOKENS", "4096"))
-TRANSLATION_MODEL    = os.getenv("TRANSLATION_MODEL", "gpt-4o-mini")
+TRANSLATION_MODEL    = os.getenv("TRANSLATION_MODEL", LLM_MODEL)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Retrieval Tuning
