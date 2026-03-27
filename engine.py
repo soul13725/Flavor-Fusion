@@ -29,8 +29,12 @@ import aiohttp
 import requests
 
 from config import (
+    GROQ_API_KEY,
+    GROQ_BASE_URL,
+    GROQ_MODEL,
     LLM_MAX_TOKENS,
     LLM_MODEL,
+    LLM_PROVIDER,
     LLM_TEMPERATURE,
     LLM_TEMPERATURE_HIGH,
     OLLAMA_BASE_URL,
@@ -42,6 +46,7 @@ from models import (
 )
 from nutrition import calculate_recipe_nutrition
 from prompts import build_system_prompt, build_user_prompt
+from retrieval import retrieve_candidate_recipes
 from translation import translate_display_strings, translate_display_strings_sync
 
 logger = logging.getLogger(__name__)
@@ -148,12 +153,23 @@ class CulinaryEngine:
     def __init__(
         self,
         api_key: Optional[str] = None,
+        provider: Optional[str] = None,
         model: Optional[str] = None,
         base_url: Optional[str] = None,
     ) -> None:
-        _ = api_key
-        self.model = model or LLM_MODEL
-        self.base_url = (base_url or OLLAMA_BASE_URL).rstrip("/")
+        self.provider = (provider or LLM_PROVIDER or "ollama").strip().lower()
+        if self.provider not in {"ollama", "groq"}:
+            logger.warning("Unknown provider '%s'; falling back to ollama", self.provider)
+            self.provider = "ollama"
+
+        if self.provider == "groq":
+            self.api_key = api_key or GROQ_API_KEY
+            self.model = model or GROQ_MODEL
+            self.base_url = (base_url or GROQ_BASE_URL).rstrip("/")
+        else:
+            self.api_key = api_key
+            self.model = model or LLM_MODEL
+            self.base_url = (base_url or OLLAMA_BASE_URL).rstrip("/")
 
     # ── Ollama helpers ────────────────────────────────────────────────────
 
@@ -167,9 +183,12 @@ class CulinaryEngine:
     # ── Step 1: Prompt Construction ──────────────────────────────────────
 
     def _retrieve(self, constraints: UserConstraints) -> List[Dict]:
-        """Retrieval is intentionally disabled; generation is LLM-only."""
-        _ = constraints
-        return []
+        """Retrieve top candidate rows from local datasets for prompt grounding."""
+        try:
+            return retrieve_candidate_recipes(constraints)
+        except Exception as exc:
+            logger.warning("Candidate retrieval failed: %s", exc)
+            return []
 
     def _build_prompts(
         self,
@@ -211,7 +230,31 @@ class CulinaryEngine:
         messages: List[Dict[str, str]],
         temperature: float,
     ) -> str:
-        """Synchronous Ollama generate API call."""
+        """Synchronous LLM call for selected provider."""
+        if self.provider == "groq":
+            if not self.api_key:
+                raise ValueError(
+                    "GROQ_API_KEY is not configured. Set it in your environment or switch backend to Ollama."
+                )
+            payload = {
+                "model": self.model,
+                "messages": [{"role": "system", "content": system_prompt}, *messages],
+                "temperature": temperature,
+                "max_tokens": min(LLM_MAX_TOKENS, 2048),
+            }
+            response = requests.post(
+                f"{self.base_url}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+                timeout=120,
+            )
+            response.raise_for_status()
+            data = response.json()
+            return data["choices"][0]["message"]["content"].strip()
+
         combined_user = "\n\n".join(m.get("content", "") for m in messages if m.get("content"))
         prompt = f"{system_prompt}\n\n{combined_user}".strip()
         payload = {
@@ -237,7 +280,31 @@ class CulinaryEngine:
         messages: List[Dict[str, str]],
         temperature: float,
     ) -> str:
-        """Asynchronous Ollama generate API call."""
+        """Asynchronous LLM call for selected provider."""
+        if self.provider == "groq":
+            if not self.api_key:
+                raise ValueError(
+                    "GROQ_API_KEY is not configured. Set it in your environment or switch backend to Ollama."
+                )
+            payload = {
+                "model": self.model,
+                "messages": [{"role": "system", "content": system_prompt}, *messages],
+                "temperature": temperature,
+                "max_tokens": min(LLM_MAX_TOKENS, 2048),
+            }
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=120)) as session:
+                async with session.post(
+                    f"{self.base_url}/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {self.api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json=payload,
+                ) as response:
+                    response.raise_for_status()
+                    data = await response.json()
+                    return data["choices"][0]["message"]["content"].strip()
+
         combined_user = "\n\n".join(m.get("content", "") for m in messages if m.get("content"))
         prompt = f"{system_prompt}\n\n{combined_user}".strip()
         payload = {
@@ -310,23 +377,13 @@ class CulinaryEngine:
         }
 
         if recipe_ings != user_ings:
-            missing = sorted(user_ings - recipe_ings)
             added = sorted(recipe_ings - user_ings)
-            if missing:
-                errors.append(f"recipe omitted user ingredients: {', '.join(missing)}")
             if added:
                 errors.append(f"recipe added non-user ingredients: {', '.join(added)}")
 
         for item in recipe.ingredients:
             if item.quantity_grams <= 0:
                 errors.append(f"ingredient '{item.name}' has non-positive quantity_grams")
-
-        spice_lines = [
-            ing for ing in recipe.ingredients
-            if any(hint in ing.name.lower() for hint in SPICE_HINTS)
-        ]
-        if not spice_lines:
-            errors.append("no spice ingredient with quantity was provided")
 
         steps = recipe.step_by_step_instructions
         if len(steps) < 5:
@@ -404,8 +461,8 @@ class CulinaryEngine:
         logger.info("Starting generation pipeline (sync)")
         logger.info("Constraints: %s", constraints.model_dump_json(indent=2))
 
-        # 1. Retrieval disabled by design (LLM-only generation)
-        candidates: List[Dict] = []
+        # 1. Retrieve local dataset candidates for better grounding
+        candidates = self._retrieve(constraints)
 
         # 2. Prompt construction
         system_prompt, user_prompt = self._build_prompts(
@@ -486,9 +543,8 @@ class CulinaryEngine:
         """
         logger.info("Starting generation pipeline (async)")
 
-        # 1. Retrieval disabled by design (LLM-only generation)
         loop = asyncio.get_running_loop()
-        candidates: List[Dict] = []
+        candidates = self._retrieve(constraints)
 
         # 2. Prompt construction
         system_prompt, user_prompt = self._build_prompts(

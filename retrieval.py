@@ -58,15 +58,27 @@ def _load_csv(path: str, label: str) -> pd.DataFrame:
 def load_all_recipes() -> pd.DataFrame:
     """Concatenate Indian + Global recipe CSVs into a unified DataFrame."""
     indian = _load_csv(str(INDIAN_RECIPES_CSV), "indian_recipes")
+    if not indian.empty:
+        indian = indian.copy()
+        indian["_source_dataset"] = "indian_recipes"
     indian_regional = _load_csv(
         str(INDIAN_REGIONAL_RECIPES_CSV),
         "indian_regional_recipes",
     )
+    if not indian_regional.empty:
+        indian_regional = indian_regional.copy()
+        indian_regional["_source_dataset"] = "indian_regional_recipes"
     global_ = _load_csv(str(GLOBAL_RECIPES_CSV), "global_recipes")
+    if not global_.empty:
+        global_ = global_.copy()
+        global_["_source_dataset"] = "global_recipes"
     offline_world = _load_csv(
         str(OFFLINE_WORLD_RECIPES_CSV),
         "offline_world_recipes",
     )
+    if not offline_world.empty:
+        offline_world = offline_world.copy()
+        offline_world["_source_dataset"] = "offline_world_recipes"
     combined = pd.concat(
         [indian, indian_regional, global_, offline_world],
         ignore_index=True,
@@ -138,6 +150,14 @@ def _filter_cuisine(df: pd.DataFrame, cuisine: str) -> pd.DataFrame:
     """Filter by cuisine preference.  'Global' disables this filter."""
     if cuisine.lower() == "global":
         return df
+    if cuisine.lower() == "indian food":
+        if "_source_dataset" in df.columns:
+            return df[
+                df["_source_dataset"].isin(
+                    ["indian_recipes", "indian_regional_recipes"]
+                )
+            ]
+        return df[df["cuisine"].str.lower().str.contains("indian", na=False)]
     if "cuisine" not in df.columns:
         return df
     return df[df["cuisine"].str.lower() == cuisine.lower()]

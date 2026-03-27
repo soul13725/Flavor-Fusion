@@ -32,6 +32,9 @@ ANTHROPIC_API_KEY    = os.getenv("ANTHROPIC_API_KEY", os.getenv("ANTHROPIC_CLAUD
 LLM_PROVIDER         = os.getenv("LLM_PROVIDER", "ollama")
 OLLAMA_BASE_URL      = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
 LLM_MODEL            = os.getenv("LLM_MODEL", "mistral")
+GROQ_API_KEY         = os.getenv("GROQ_API_KEY", "")
+GROQ_BASE_URL        = os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1")
+GROQ_MODEL           = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
 LLM_TEMPERATURE      = float(os.getenv("LLM_TEMPERATURE", "0.2"))
 LLM_TEMPERATURE_HIGH = float(os.getenv("LLM_TEMPERATURE_HIGH", "1.3"))  # absurd combos
 LLM_MAX_TOKENS       = int(os.getenv("LLM_MAX_TOKENS", "4096"))
@@ -62,6 +65,7 @@ VALID_EQUIPMENT = {
 }
 
 VALID_CUISINES = {
+    "Indian Food",
     "Indian", "Italian", "Mexican", "Chinese", "Japanese",
     "Thai", "French", "Mediterranean", "American", "Korean",
     "Middle Eastern", "Ethiopian", "Global",

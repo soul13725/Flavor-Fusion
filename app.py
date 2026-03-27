@@ -19,14 +19,13 @@ import json
 import re
 import sys
 from pathlib import Path
-from uuid import uuid4
 
 import streamlit as st
 
 # ── Ensure project root is importable (handles stlite and direct `streamlit run`)
 sys.path.insert(0, str(Path(__file__).parent))
 
-from config import VALID_EQUIPMENT, VALID_CUISINES
+from config import GROQ_API_KEY, VALID_EQUIPMENT, VALID_CUISINES
 from engine import CulinaryEngine, GenerationResult
 from models import BeveragePairing, GeneratedRecipe, TimeConstraints, UserConstraints
 from retrieval import (
@@ -70,6 +69,8 @@ UI_STRINGS: dict = {
         "subtitle": "Discover recipes, beverages, and nutrition in one smart kitchen workspace",
         "offline_mode_label": "Offline Mode (No API Key)",
         "offline_mode_help": "Use local dataset retrieval only. No LLM creativity or translation.",
+        "backend_label": "Model Backend",
+        "backend_help": "Use local Mistral via Ollama, or a faster API model via Groq.",
         "language_label": "Output Language",
         "skill_label": "Skill Level",
         "equipment_label": "Available Equipment",
@@ -558,9 +559,7 @@ def _init_session_state() -> None:
         "last_constraints": None,
         "pantry_text": "",
         "beverage_text": "",
-        "user_request": "",
         "conversation_messages": [],
-        "conversation_session_id": str(uuid4()),
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -959,6 +958,18 @@ def _render_sidebar() -> dict:
 
         st.divider()
 
+        backend_option = st.selectbox(
+            _t("backend_label"),
+            options=["Mistral (Ollama)", "Fast API (Groq)"],
+            index=0,
+            help=_t("backend_help"),
+        )
+        llm_provider = "groq" if backend_option == "Fast API (Groq)" else "ollama"
+        if llm_provider == "groq" and not GROQ_API_KEY:
+            st.warning("GROQ_API_KEY not found. Set it in your environment before using Fast API mode.")
+
+        st.divider()
+
         # ── Skill level ────────────────────────────────────────────────────
         skill = st.selectbox(
             _t("skill_label"),
@@ -1000,6 +1011,7 @@ def _render_sidebar() -> dict:
         absurd = st.toggle(_t("absurd_label"), help=_t("absurd_help"))
 
     return {
+        "llm_provider": llm_provider,
         "skill": skill,
         "equipment": equipment,
         "cuisine": cuisine,
@@ -1137,7 +1149,6 @@ def _render_debug_tab(result) -> None:
 def _run_generation(
     ingredients: list[str],
     sidebar_vals: dict,
-    user_request: str,
 ) -> None:
     """Build constraints, call CulinaryEngine.generate(), store in session state."""
     constraints = UserConstraints(
@@ -1155,28 +1166,25 @@ def _run_generation(
         servings=sidebar_vals["servings"],
     )
 
-    engine = CulinaryEngine()
+    engine = CulinaryEngine(provider=sidebar_vals.get("llm_provider", "ollama"))
 
     with st.spinner(_t("generating")):
         result = engine.generate(
             constraints,
             session_messages=st.session_state.get("conversation_messages", []),
-            user_request=user_request,
+            user_request="",
         )
 
     st.session_state.last_result = result
     st.session_state.last_constraints = constraints
     summary_line = f"Generated recipe: {result.recipe.recipe_name}"
     turns = st.session_state.get("conversation_messages", [])
-    if user_request.strip():
-        turns.append({"role": "user", "content": user_request.strip()})
-    else:
-        turns.append(
-            {
-                "role": "user",
-                "content": f"Ingredients: {', '.join(ingredients)}",
-            }
-        )
+    turns.append(
+        {
+            "role": "user",
+            "content": f"Ingredients: {', '.join(ingredients)}",
+        }
+    )
     turns.append({"role": "assistant", "content": summary_line})
     st.session_state.conversation_messages = turns[-20:]
 
@@ -1196,7 +1204,6 @@ def _run_beverage_generation(
     ingredients: list[str],
     beverage_type: str,
     sidebar_vals: dict,
-    user_request: str,
 ) -> None:
     """Generate a standalone beverage from manual user input."""
     constraints = UserConstraints(
@@ -1214,8 +1221,8 @@ def _run_beverage_generation(
         servings=sidebar_vals["servings"],
     )
 
-    engine = CulinaryEngine()
-    beverage_request = user_request.strip() or "Generate a beverage only response."
+    engine = CulinaryEngine(provider=sidebar_vals.get("llm_provider", "ollama"))
+    beverage_request = "Generate a beverage only response."
     result = engine.generate(
         constraints,
         session_messages=st.session_state.get("conversation_messages", []),
@@ -1279,24 +1286,6 @@ def main() -> None:
         )
         st.session_state.pantry_text = pantry_raw
 
-    user_request = st.text_area(
-        "Describe what you want",
-        value=st.session_state.user_request,
-        height=80,
-        placeholder="Example: High-protein dinner, spicy, one-pot, no dairy",
-        help="Optional natural language request sent to the local model with your ingredients.",
-    )
-    st.session_state.user_request = user_request
-
-    session_col1, session_col2 = st.columns([2, 1])
-    with session_col1:
-        st.caption(f"Session ID: {st.session_state.conversation_session_id}")
-    with session_col2:
-        if st.button("Reset Session", use_container_width=True):
-            st.session_state.conversation_messages = []
-            st.session_state.conversation_session_id = str(uuid4())
-            st.rerun()
-
     with col_generate:
         st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
 
@@ -1316,7 +1305,7 @@ def main() -> None:
             st.warning(_t("no_ingredients"))
         else:
             try:
-                _run_generation(ingredients, sidebar_vals, user_request)
+                _run_generation(ingredients, sidebar_vals)
             except Exception as exc:
                 st.error(f"{_t('error_prefix')}: {exc}")
 
@@ -1356,7 +1345,6 @@ def main() -> None:
                     beverage_ingredients,
                     beverage_type,
                     sidebar_vals,
-                    user_request,
                 )
             except Exception as exc:
                 st.error(f"{_t('error_prefix')}: {exc}")
